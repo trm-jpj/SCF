@@ -1,0 +1,105 @@
+---
+title: "Kort til SCF"
+output: html_document
+date: "2025-03-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(highcharter)
+library(data.table)
+library(geojsonio)
+library(sf)
+
+
+lang <- getOption("highcharter.lang")
+lang$decimalPoint <- ","
+lang$thousandsSep <- "."
+lang$numericSymbols <- highcharter::JS("null") # optional: remove the SI prefixes
+options(highcharter.lang = lang)
+
+
+
+sti <- "S:/CAKL/Projekter/5. Klimaanalyser/SCF og Transportfatigdom/Data/"
+shape_filer <- "S:/shapefiler/kommuner/"
+
+dir(sti)
+
+data <- fread(str_c(sti, "opt_kom.csv"), encoding = "Latin-1") %>%
+  rename(saarbare =sårbare )
+# %>% 
+#   mutate(KOM_TXT  = str_replace_all(KOM_TXT, c("ø"="oe", "å"="aa", "æ"="ae", "Æ"="Ae", "-"= " ")))
+
+geojson_url  <- "S:/TRM Databank/009 Geofiler/kommuner.geojson"
+denmark_map <- st_read(geojson_url, quiet = TRUE)
+# %>% 
+#   mutate(navn  = str_replace_all(navn, c("ø"="oe", "å"="aa", "æ"="ae", "Æ"="Ae", "-"= " ")))# Read as sf object
+
+# View unique municipality names (for identifying Bornholm & Christiansø)
+unique(denmark_map$navn)
+
+# Identify & shift Bornholm and Christiansø westward
+denmark_map$geometry[denmark_map$navn %in% c("Bornholm", "Christiansø")] <- 
+  st_geometry(denmark_map$geometry[denmark_map$navn %in% c("Bornholm", "Christiansø")]) + 
+  c(-2.7, 2)  # Move west (-5 longitude), move north (+2 latitude)
+
+denmark_json <- geojson_list(denmark_map)
+
+# Prepare data for merging
+# data$KOM_TXT <- tolower(data$KOM_TXT)  # Convert names to lowercase to match geojson
+# denmark_map$navn <- tolower(denmark_map$navn)  # Ensure consistency
+
+# Merge data with map
+denmark_map1 <- left_join(denmark_map  , data,
+                              by = c("navn" = "KOM_TXT")) %>% 
+  mutate(
+    # across(c("lavindkomst", "saarbare", "risikogruppe"), ~coalesce(.x,0)),
+         lavindkomst1 =lavindkomst,
+         navn1 = str_to_title(navn))
+
+colnames(denmark_map1) <- tolower(colnames(denmark_map1))  # Convert column names to lowercase
+
+
+```
+
+## Kort over transportfattigdom i Danmark
+
+
+```{r}
+
+highchart(type = "map") %>%
+  hc_add_series_map(
+    map = denmark_json,  
+    df = denmark_map1,  
+    value = "lavindkomst",  
+    joinBy = c("navn", "navn"),  
+    name = "Lavindkomst",  
+    borderWidth = 1,  
+    borderColor = "#a3a3a3"
+  ) %>%
+  hc_colorAxis(
+    stops = color_stops(n = 3, colors = c("#F1F6FF", "#6C9CEB", "#002D73")),  
+    min = 0,  
+    max = max(denmark_map1$lavindkomst, na.rm = TRUE)
+  ) %>%
+  # hc_title(text = "Transportfattigdom i Danmark") %>% 
+  hc_tooltip(
+    useHTML = TRUE,
+    # backgroundColor = "rgba(255,255,255,0.9)",
+    # borderColor = "#000000",
+    headerFormat = "",
+    pointFormat = "<b>{point.navn1}</b><br>
+    Lavindkomst: <b>{point.lavindkomst1}</b><br>
+    Sårbare: <b>{point.saarbare}</b><br>
+    Risikogruppe: <b>{point.risikogruppe}</b>",
+    style = list(fontSize = "12px", color = "#000000")
+  ) %>% 
+  hc_exporting(
+      enabled = TRUE, # always enabled
+      filename = "Kort (Transportfattige)")
+
+
+
+```
