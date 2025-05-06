@@ -12,6 +12,7 @@ library(highcharter)
 library(data.table)
 library(geojsonio)
 library(sf)
+library(TRMvisual)
 
 
 lang <- getOption("highcharter.lang")
@@ -20,15 +21,33 @@ lang$thousandsSep <- "."
 lang$numericSymbols <- highcharter::JS("null") # optional: remove the SI prefixes
 options(highcharter.lang = lang)
 
-
+retter_dk_bogstaver_header_ny <- function(input, sprog = "da"){
+  
+  assert::assert(sprog %in% c("da", "en"))
+  
+  if(sprog == "da"){
+    oversaet_dk <- c("Ã¥"="å", "Ã¸"="ø", "Ã¦"="æ", "Ã†"="Æ", "Ã…"="Å", "Ã˜"="Ø")
+  } else if(sprog=="en") {
+    oversaet_dk <- c("Ã¥|å"="aa", "Ã¸|ø"="oe", "Ã¦|æ"="ae", "Ã†|Æ"="Ae", "Ã…|Å"="Aa", "Ã˜|Ø"="Oe")
+  }
+  
+  colnames(input) <- names(input) %>% 
+    stringr::str_replace_all(oversaet_dk)
+  
+  return(input)
+  
+}
 
 sti <- "S:/CAKL/Projekter/5. Klimaanalyser/SCF og Transportfatigdom/Data/"
 shape_filer <- "S:/shapefiler/kommuner/"
 
-dir(sti)
-
-data <- fread(str_c(sti, "opt_kom.csv"), encoding = "Latin-1") %>%
-  rename(saarbare =sårbare )
+data <- fread(str_c(sti, "opt_kom_koll_m_alle.csv"), encoding = "Latin-1") %>%
+  retter_dk_bogstaver_header_ny("en") %>% 
+  retter_dk_bogstaver_col() %>% 
+  mutate(across(where(is.numeric), ~coalesce(.x,0)),
+         andel_fattige =  round(lavindkomst_over_30/(lavindkomst_over_30+lavindkomst_under_30 )*100,1),
+         andel_saarbare =  round(saarbare_over_30/(saarbare_over_30+saarbare_under_30 )*100,1),
+         andel_alle =  round((lavindkomst_over_30+saarbare_over_30)/rowSums(across(where(is.numeric)))*100,1))
 # %>% 
 #   mutate(KOM_TXT  = str_replace_all(KOM_TXT, c("ø"="oe", "å"="aa", "æ"="ae", "Æ"="Ae", "-"= " ")))
 
@@ -56,8 +75,9 @@ denmark_map1 <- left_join(denmark_map  , data,
                               by = c("navn" = "KOM_TXT")) %>% 
   mutate(
     # across(c("lavindkomst", "saarbare", "risikogruppe"), ~coalesce(.x,0)),
-         lavindkomst1 =lavindkomst,
-         navn1 = str_to_title(navn))
+         andel_fattige1 =andel_fattige,
+         navn1 = str_to_title(navn)) %>% 
+  st_drop_geometry()
 
 colnames(denmark_map1) <- tolower(colnames(denmark_map1))  # Convert column names to lowercase
 
@@ -73,16 +93,16 @@ highchart(type = "map") %>%
   hc_add_series_map(
     map = denmark_json,  
     df = denmark_map1,  
-    value = "lavindkomst",  
+    value = "andel_fattige",  
     joinBy = c("navn", "navn"),  
-    name = "Lavindkomst",  
+    name = "andel_fattige",  
     borderWidth = 1,  
     borderColor = "#a3a3a3"
   ) %>%
   hc_colorAxis(
     stops = color_stops(n = 3, colors = c("#F1F6FF", "#6C9CEB", "#002D73")),  
     min = 0,  
-    max = max(denmark_map1$lavindkomst, na.rm = TRUE)
+    max = max(denmark_map1$andel_fattige, na.rm = TRUE)
   ) %>%
   # hc_title(text = "Transportfattigdom i Danmark") %>% 
   hc_tooltip(
@@ -91,9 +111,15 @@ highchart(type = "map") %>%
     # borderColor = "#000000",
     headerFormat = "",
     pointFormat = "<b>{point.navn1}</b><br>
-    Lavindkomst: <b>{point.lavindkomst1}</b><br>
-    Sårbare: <b>{point.saarbare}</b><br>
-    Risikogruppe: <b>{point.risikogruppe}</b>",
+    <b>Andel transport fattige blandt</b><br>
+    Lavindkomst: <b>{point.andel_fattige1} pct.</b><br>
+    Sårbare: <b>{point.andel_saarbare} pct.</b><br>
+    Alle: <b>{point.andel_alle} pct.</b>",
+    
+    # pointFormat = "<b>{point.navn1}</b><br>
+    # Lavindkomst: <b>{point.lavindkomst1}</b><br>
+    # Sårbare: <b>{point.saarbare}</b><br>
+    # Risikogruppe: <b>{point.risikogruppe}</b>",
     style = list(fontSize = "12px", color = "#000000")
   ) %>% 
   hc_exporting(
